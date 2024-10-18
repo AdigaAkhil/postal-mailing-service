@@ -23,7 +23,6 @@ import org.slf4j.LoggerFactory;
 public class LocationProgramReloaded {
 
   private static final Logger logger = LoggerFactory.getLogger(LocationInfoProgram.class);
-  private static final String CONFIG_FILE = "config.properties";
   private static final String BASE_URL =
       "https://maps.googleapis.com/maps/api/place/autocomplete/json";
   private static final int EXIT_CHOICE = 7;
@@ -35,20 +34,9 @@ public class LocationProgramReloaded {
   private final CloseableHttpClient httpClient;
 
   public LocationProgramReloaded() throws IOException {
-    this.apiKey = loadApiKey();
+    this.apiKey = System.getenv("GOOGLE_API_KEY");
     this.scanner = new Scanner(System.in);
     this.httpClient = HttpClients.createDefault();
-  }
-
-  private String loadApiKey() throws IOException {
-    Properties properties = new Properties();
-    try (InputStream input = getClass().getClassLoader().getResourceAsStream(CONFIG_FILE)) {
-      if (input == null) {
-        throw new IOException("Unable to find " + CONFIG_FILE);
-      }
-      properties.load(input);
-      return properties.getProperty("api.key");
-    }
   }
 
   public void run() {

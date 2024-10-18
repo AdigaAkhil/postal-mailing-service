@@ -24,30 +24,12 @@ import org.slf4j.LoggerFactory;
 public class LocationInfoProgram {
 
   private static final Logger logger = LoggerFactory.getLogger(LocationInfoProgram.class);
-  private static String API_KEY;
+  private static final String API_KEY = System.getenv("GOOGLE_API_KEY");
   private static final String BASE_URL =
       "https://maps.googleapis.com/maps/api/place/autocomplete/json";
   private static final Scanner scanner = new Scanner(System.in);
   private static final Map<String, String> locationInfo = new HashMap<>();
   private static final CloseableHttpClient client = HttpClients.createDefault();
-
-  // Static block to load properties
-  static {
-    Properties properties = new Properties();
-    try (InputStream input = LocationInfoProgram.class.getClassLoader().getResourceAsStream("config.properties")) {
-      if (input == null) {
-        logger.error("Sorry, unable to find config.properties");
-        API_KEY = null;  // Handle the case where the file is not found
-      } else {
-        properties.load(input);
-        API_KEY = properties.getProperty("api.key");  // Read the API key
-      }
-    } catch (IOException ex) {
-      logger.error("Error loading properties file", ex);
-      API_KEY = null;  // Handle IO exception
-    }
-  }
-
 
 
   public static void main(String[] args) {
