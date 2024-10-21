@@ -1,32 +1,38 @@
 package org.demo;
 
-import java.io.IOException;
-import java.io.InputStream;
-import java.net.URI;
-import java.net.URLEncoder;
-import java.nio.charset.StandardCharsets;
-import java.util.HashMap;
-import java.util.Map;
-import java.util.Properties;
-import java.util.Scanner;
+import java.util.List;
 import org.apache.hc.client5.http.classic.methods.HttpGet;
+import org.apache.hc.client5.http.classic.methods.HttpPost;
 import org.apache.hc.client5.http.impl.classic.CloseableHttpClient;
 import org.apache.hc.client5.http.impl.classic.CloseableHttpResponse;
 import org.apache.hc.client5.http.impl.classic.HttpClients;
 import org.apache.hc.core5.http.ParseException;
 import org.apache.hc.core5.http.io.entity.EntityUtils;
+import org.apache.hc.core5.http.io.entity.StringEntity;
 import org.json.JSONArray;
 import org.json.JSONObject;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-public class LocationProgramReloaded {
+import java.io.IOException;
+import java.net.URI;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.Scanner;
 
-  private static final Logger logger = LoggerFactory.getLogger(LocationInfoProgram.class);
+public class LocationProgramReloaded implements AutoCloseable {
+
+  private static final Logger logger = LoggerFactory.getLogger(LocationProgramReloaded.class);
   private static final String BASE_URL =
       "https://maps.googleapis.com/maps/api/place/autocomplete/json";
-  private static final int EXIT_CHOICE = 7;
-  private static final int CLEAR_CHOICE = 6;
+  private static final String GEOCODING_URL = "https://maps.googleapis.com/maps/api/geocode/json";
+  private static final String GEOLOCATION_URL =
+      "https://www.googleapis.com/geolocation/v1/geolocate";
+  private static final int EXIT_CHOICE = 8;
+  private static final int CLEAR_CHOICE = 7;
+  private static final int USE_CURRENT_LOCATION = 6;
 
   private final String apiKey;
   private final Map<String, String> locationInfo = new HashMap<>();
@@ -35,6 +41,9 @@ public class LocationProgramReloaded {
 
   public LocationProgramReloaded() throws IOException {
     this.apiKey = System.getenv("GOOGLE_API_KEY");
+    if (this.apiKey == null || this.apiKey.isEmpty()) {
+      throw new IllegalStateException("GOOGLE_API_KEY environment variable is not set");
+    }
     this.scanner = new Scanner(System.in);
     this.httpClient = HttpClients.createDefault();
   }
@@ -43,7 +52,7 @@ public class LocationProgramReloaded {
     try {
       while (true) {
         displayMenu();
-        int choice = getIntInput("Enter your choice: ");
+        int choice = getIntInput("Enter your choice");
         if (choice == EXIT_CHOICE) {
           logger.info("Exiting the program...");
           break;
@@ -53,20 +62,19 @@ public class LocationProgramReloaded {
       }
     } catch (Exception e) {
       logger.error("An unexpected error occurred", e);
-    } finally {
-      closeResources();
     }
   }
 
   private void displayMenu() {
-    System.out.println("\nPlease enter the Below index :");
+    System.out.println("\nPlease enter the index of your choice:");
     System.out.println("1. Country");
     System.out.println("2. State");
     System.out.println("3. City");
     System.out.println("4. Address");
     System.out.println("5. PinCode");
-    System.out.println("6. Clear");
-    System.out.println("7. Exit");
+    System.out.println("6. Use Current Location");
+    System.out.println("7. Clear");
+    System.out.println("8. Exit");
   }
 
   private void processChoice(int choice) throws IOException {
@@ -76,13 +84,97 @@ public class LocationProgramReloaded {
       case 3 -> handleLocationInput("city", "locality");
       case 4 -> handleLocationInput("address", "address");
       case 5 -> handleLocationInput("pinCode", "postal_code");
+      case USE_CURRENT_LOCATION -> useCurrentLocation();
       case CLEAR_CHOICE -> clearLocationInfo();
+      case EXIT_CHOICE -> {
+        /* Do nothing, handled in run() */
+      }
       default -> System.out.println("Invalid choice. Please try again.");
     }
   }
 
+  private void useCurrentLocation() {
+    try {
+      System.out.println("Fetching your current location...");
+      JSONObject geoLocation = getGeolocation();
+      double latitude = geoLocation.getJSONObject("location").getDouble("lat");
+      double longitude = geoLocation.getJSONObject("location").getDouble("lng");
+
+      System.out.printf("Coordinates: %.6f, %.6f%n", latitude, longitude);
+
+      String geocodingData = getGeocodingData(latitude, longitude);
+      parseAndSetAddress(geocodingData);
+
+      System.out.println("Location information updated based on your current location.");
+    } catch (Exception e) {
+      logger.error("Error fetching current location", e);
+      System.out.println("Failed to fetch current location. Please try again or use manual input.");
+    }
+  }
+
+  private void parseAndSetAddress(String jsonResponse) {
+    JSONObject root = new JSONObject(jsonResponse);
+    JSONArray results = root.getJSONArray("results");
+
+    if (!results.isEmpty()) {
+      JSONArray addressComponents = results.getJSONObject(0).getJSONArray("address_components");
+
+      clearLocationInfo();
+
+      for (int i = 0; i < addressComponents.length(); i++) {
+        JSONObject component = addressComponents.getJSONObject(i);
+        JSONArray types = component.getJSONArray("types");
+        String longName = component.getString("long_name");
+
+        updateLocationInfo(types, longName);
+      }
+
+      // Trim the address if it was set
+      locationInfo.computeIfPresent("address", (k, v) -> v.trim());
+    } else {
+      System.out.println("No results found for the current location");
+    }
+  }
+
+  private void updateLocationInfo(JSONArray types, String longName) {
+    List<Object> typesList = types.toList();
+    if (typesList.contains("country")) {
+      locationInfo.put("country", longName);
+    } else if (typesList.contains("administrative_area_level_1")) {
+      locationInfo.put("state", longName);
+    } else if (typesList.contains("locality")) {
+      System.out.println("CAME HERE ??");
+      locationInfo.put("city", longName);
+    } else if (typesList.contains("postal_code")) {
+      locationInfo.put("pinCode", longName);
+    } else if ((typesList.contains("street_address")
+        || typesList.contains("route")
+        || typesList.contains("neighborhood"))
+        || typesList.contains("sublocality")) {
+      locationInfo.merge("address", longName, (old, newVal) -> old + " ," + newVal);
+      System.out.println("AFTER : " + locationInfo.get("address"));
+    }
+  }
+
+  private JSONObject getGeolocation() throws IOException, ParseException {
+    HttpPost httpPost = new HttpPost(GEOLOCATION_URL + "?key=" + apiKey);
+    httpPost.setHeader("Content-Type", "application/json");
+    httpPost.setEntity(new StringEntity("{}"));
+
+    try (CloseableHttpResponse response = httpClient.execute(httpPost)) {
+      String responseBody = EntityUtils.toString(response.getEntity());
+      return new JSONObject(responseBody);
+    }
+  }
+
+  private String getGeocodingData(double latitude, double longitude) throws IOException {
+    String url =
+        String.format("%s?latlng=%s,%s&key=%s", GEOCODING_URL, latitude, longitude, apiKey);
+    return makeApiCall(url);
+  }
+
   private void handleLocationInput(String key, String type) throws IOException {
-    String input = getStringInput("Please Enter the " + key);
+    String input = getStringInput("Please enter the " + key);
     logger.info("Received {} {} from user", key, input);
     processApiRequest(input, type, key);
   }
@@ -115,7 +207,6 @@ public class LocationProgramReloaded {
         if (handleIndexInput(predictions, index, type, key)) {
           break;
         } else if (type.equalsIgnoreCase("postal_code")) {
-          // If it's a postal code and the number is greater than 5, treat it as a new search
           predictions = searchAgain(userInput, type);
           if (predictions.isEmpty()) {
             locationInfo.put(key, userInput);
@@ -143,7 +234,6 @@ public class LocationProgramReloaded {
           return selectPrediction(predictions, index - 1, key);
         }
       }
-      // If index > 5 for postal code, we'll return false and handle it in handleUserSelection
       return false;
     } else if (index > 0 && index <= predictions.length()) {
       return selectPrediction(predictions, index - 1, key);
@@ -254,11 +344,11 @@ public class LocationProgramReloaded {
 
   private void displayLocationInfo() {
     System.out.println("\nCurrent Location Information:");
-    System.out.println("Country - " + locationInfo.getOrDefault("country", "Not set"));
-    System.out.println("State - " + locationInfo.getOrDefault("state", "Not set"));
-    System.out.println("City - " + locationInfo.getOrDefault("city", "Not set"));
-    System.out.println("Address - " + locationInfo.getOrDefault("address", "Not set"));
-    System.out.println("PinCode - " + locationInfo.getOrDefault("pinCode", "Not set"));
+    System.out.println("Country: " + locationInfo.getOrDefault("country", "Not set"));
+    System.out.println("State: " + locationInfo.getOrDefault("state", "Not set"));
+    System.out.println("City: " + locationInfo.getOrDefault("city", "Not set"));
+    System.out.println("Address: " + locationInfo.getOrDefault("address", "Not set"));
+    System.out.println("PinCode: " + locationInfo.getOrDefault("pinCode", "Not set"));
   }
 
   private String getStringInput(String prompt) {
@@ -269,7 +359,7 @@ public class LocationProgramReloaded {
   private int getIntInput(String prompt) {
     while (true) {
       try {
-        System.out.print(prompt);
+        System.out.print(prompt + ": ");
         return Integer.parseInt(scanner.nextLine().trim());
       } catch (NumberFormatException e) {
         System.out.println("Invalid input. Please enter a number.");
@@ -277,7 +367,8 @@ public class LocationProgramReloaded {
     }
   }
 
-  private void closeResources() {
+  @Override
+  public void close() {
     try {
       scanner.close();
       httpClient.close();
@@ -287,10 +378,10 @@ public class LocationProgramReloaded {
   }
 
   public static void main(String[] args) {
-    try {
-      new LocationProgramReloaded().run();
+    try (LocationProgramReloaded program = new LocationProgramReloaded()) {
+      program.run();
     } catch (IOException e) {
-      logger.error("Failed to initialize LocationInfoProgram", e);
+      logger.error("Failed to initialize LocationProgramReloaded", e);
     }
   }
 }
