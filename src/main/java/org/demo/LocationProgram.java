@@ -1,5 +1,7 @@
 package org.demo;
 
+import java.awt.Desktop;
+import java.net.URISyntaxException;
 import java.util.List;
 import org.apache.hc.client5.http.classic.methods.HttpGet;
 import org.apache.hc.client5.http.classic.methods.HttpPost;
@@ -22,15 +24,17 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.Scanner;
 
-public class LocationProgramReloaded implements AutoCloseable {
+public class LocationProgram implements AutoCloseable {
 
-  private static final Logger logger = LoggerFactory.getLogger(LocationProgramReloaded.class);
-  private static final String BASE_URL =
+  private static final Logger logger = LoggerFactory.getLogger(LocationProgram.class);
+  private static final String AUTOCOMPLETE_URL =
       "https://maps.googleapis.com/maps/api/place/autocomplete/json";
   private static final String GEOCODING_URL = "https://maps.googleapis.com/maps/api/geocode/json";
   private static final String GEOLOCATION_URL =
       "https://www.googleapis.com/geolocation/v1/geolocate";
-  private static final int EXIT_CHOICE = 8;
+  private static final String MAPS_URL = "https://www.google.com/maps/search";
+
+  private static final int EXIT_CHOICE = 9;
   private static final int CLEAR_CHOICE = 7;
   private static final int USE_CURRENT_LOCATION = 6;
 
@@ -39,7 +43,7 @@ public class LocationProgramReloaded implements AutoCloseable {
   private final Scanner scanner;
   private final CloseableHttpClient httpClient;
 
-  public LocationProgramReloaded() throws IOException {
+  public LocationProgram() throws IOException {
     this.apiKey = System.getenv("GOOGLE_API_KEY");
     if (this.apiKey == null || this.apiKey.isEmpty()) {
       throw new IllegalStateException("GOOGLE_API_KEY environment variable is not set");
@@ -74,7 +78,8 @@ public class LocationProgramReloaded implements AutoCloseable {
     System.out.println("5. PinCode");
     System.out.println("6. Use Current Location");
     System.out.println("7. Clear");
-    System.out.println("8. Exit");
+    System.out.println("8. Pinpoint on Google Maps");
+    System.out.println("9. Exit");
   }
 
   private void processChoice(int choice) throws IOException {
@@ -86,11 +91,49 @@ public class LocationProgramReloaded implements AutoCloseable {
       case 5 -> handleLocationInput("pinCode", "postal_code");
       case USE_CURRENT_LOCATION -> useCurrentLocation();
       case CLEAR_CHOICE -> clearLocationInfo();
+      case 8 -> pinpointOnGoogleMaps(); // New case for Google Maps
       case EXIT_CHOICE -> {
         /* Do nothing, handled in run() */
       }
       default -> System.out.println("Invalid choice. Please try again.");
     }
+  }
+
+  private void pinpointOnGoogleMaps() throws IOException {
+    String address = locationInfo.get("address");
+    if (address != null && !address.isEmpty()) {
+      String completeAddress = getCompleteAddress(address);
+      String googleMapsRedirectUrl = constructGoogleMapsURL(completeAddress);
+
+      // Open the default browser with the constructed URL
+      try {
+        if (Desktop.isDesktopSupported()) {
+          Desktop desktop = Desktop.getDesktop();
+          desktop.browse(new URI(googleMapsRedirectUrl));
+        } else {
+          System.out.println("Desktop API is not supported on this system.");
+        }
+      } catch (IOException | URISyntaxException e) {
+        e.printStackTrace();
+      }
+    } else {
+      System.out.println(
+          "Error: Address data is not available. Please provide an address before using this feature.");
+    }
+  }
+
+  public static String constructGoogleMapsURL(String address) {
+    if (address != null) {
+      String queryParam = address.replace(" ", "+");
+      return String.format("%s/?api=1&query=%s", MAPS_URL, queryParam);
+    } else {
+      return null;
+    }
+  }
+
+  public String getCompleteAddress(String partialAddress) throws IOException {
+    JSONArray predictions = searchAgain(partialAddress, "address");
+    return predictions.getJSONObject(0).getString("description");
   }
 
   private void useCurrentLocation() {
@@ -143,7 +186,6 @@ public class LocationProgramReloaded implements AutoCloseable {
     } else if (typesList.contains("administrative_area_level_1")) {
       locationInfo.put("state", longName);
     } else if (typesList.contains("locality")) {
-      System.out.println("CAME HERE ??");
       locationInfo.put("city", longName);
     } else if (typesList.contains("postal_code")) {
       locationInfo.put("pinCode", longName);
@@ -151,8 +193,7 @@ public class LocationProgramReloaded implements AutoCloseable {
         || typesList.contains("route")
         || typesList.contains("neighborhood"))
         || typesList.contains("sublocality")) {
-      locationInfo.merge("address", longName, (old, newVal) -> old + " ," + newVal);
-      System.out.println("AFTER : " + locationInfo.get("address"));
+      locationInfo.merge("address", longName, (old, newVal) -> old + ", " + newVal);
     }
   }
 
@@ -259,7 +300,7 @@ public class LocationProgramReloaded implements AutoCloseable {
 
   private String buildApiUrl(String input, String type) {
     String encodedInput = URLEncoder.encode(input, StandardCharsets.UTF_8);
-    return BASE_URL + "?input=" + encodedInput + "&key=" + apiKey + "&type=" + type;
+    return AUTOCOMPLETE_URL + "?input=" + encodedInput + "&key=" + apiKey + "&type=" + type;
   }
 
   private String makeApiCall(String url) throws IOException {
@@ -378,7 +419,7 @@ public class LocationProgramReloaded implements AutoCloseable {
   }
 
   public static void main(String[] args) {
-    try (LocationProgramReloaded program = new LocationProgramReloaded()) {
+    try (LocationProgram program = new LocationProgram()) {
       program.run();
     } catch (IOException e) {
       logger.error("Failed to initialize LocationProgramReloaded", e);
