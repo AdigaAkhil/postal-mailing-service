@@ -395,24 +395,53 @@ public class LocationProgram implements Closeable {
   /** Opens the location in Google Maps. */
   private void pinpointOnGoogleMaps() {
     try {
-      String address = locationInfo.getAddress().orElse(null);
-      if (address != null && !address.isEmpty()) {
-        String completeAddress = googleApiService.getCompleteAddress(address);
+      String address = locationInfo.getAddress().orElse("");
+      String city = locationInfo.getCity().orElse("");
+      String state = locationInfo.getState().orElse("");
+      String country = locationInfo.getCountry().orElse("");
+
+      if (!address.isEmpty() || !city.isEmpty() || !state.isEmpty() || !country.isEmpty()) {
+        // Combine address components
+        StringBuilder addressInput = new StringBuilder();
+        if (!address.isEmpty()) {
+          addressInput.append(address);
+        }
+        if (!city.isEmpty()) {
+          if (!addressInput.isEmpty()) {
+            addressInput.append(", ");
+          }
+          addressInput.append(city);
+        }
+        if (!state.isEmpty()) {
+          if (!addressInput.isEmpty()) {
+            addressInput.append(", ");
+          }
+          addressInput.append(state);
+        }
+        if (!country.isEmpty()) {
+          if (!addressInput.isEmpty()) {
+            addressInput.append(", ");
+          }
+          addressInput.append(country);
+        }
+
+        String completeAddress = googleApiService.getCompleteAddress(addressInput.toString());
         if (completeAddress != null) {
           String googleMapsUrl = googleApiService.constructGoogleMapsURL(completeAddress);
           GoogleMapsUtil.openInBrowser(googleMapsUrl);
         } else {
-          logger.info("Error: Address data is not available. Please try again.");
+          logger.info("Error: Complete address could not be found. Please try again.");
         }
       } else {
         logger.info(
-            "Error: Address data is not available. Please provide an address before using this feature.");
+            "Error: Insufficient location data. Please provide at least one address component before using this feature.");
       }
     } catch (Exception e) {
       logger.error("Error pinning on Google Maps", e);
       logger.info("An error occurred while trying to open Google Maps: {}", e.getMessage());
     }
   }
+
 
   /** Clears all location information. */
   private void clearLocationInfo() {
