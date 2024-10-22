@@ -1,62 +1,52 @@
 package org.demo;
 
-import java.awt.Desktop;
-import java.net.URISyntaxException;
-import java.util.List;
-import org.apache.hc.client5.http.classic.methods.HttpGet;
-import org.apache.hc.client5.http.classic.methods.HttpPost;
-import org.apache.hc.client5.http.impl.classic.CloseableHttpClient;
-import org.apache.hc.client5.http.impl.classic.CloseableHttpResponse;
-import org.apache.hc.client5.http.impl.classic.HttpClients;
-import org.apache.hc.core5.http.ParseException;
-import org.apache.hc.core5.http.io.entity.EntityUtils;
-import org.apache.hc.core5.http.io.entity.StringEntity;
+import java.io.Closeable;
+import java.io.IOException;
+import java.util.Scanner;
+import org.demo.exception.GoogleApiException;
+import org.demo.model.LocationInfo;
+import org.demo.service.GoogleApiService;
+import org.demo.util.GoogleMapsUtil;
+import org.demo.util.InputValidator;
 import org.json.JSONArray;
 import org.json.JSONObject;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.io.IOException;
-import java.net.URI;
-import java.net.URLEncoder;
-import java.nio.charset.StandardCharsets;
-import java.util.HashMap;
-import java.util.Map;
-import java.util.Scanner;
-
-public class LocationProgram implements AutoCloseable {
+/**
+ * The LocationProgram class contains the main logic for interacting with the user and managing
+ * location information.
+ */
+public class LocationProgram implements Closeable {
 
   private static final Logger logger = LoggerFactory.getLogger(LocationProgram.class);
-  private static final String AUTOCOMPLETE_URL =
-      "https://maps.googleapis.com/maps/api/place/autocomplete/json";
-  private static final String GEOCODING_URL = "https://maps.googleapis.com/maps/api/geocode/json";
-  private static final String GEOLOCATION_URL =
-      "https://www.googleapis.com/geolocation/v1/geolocate";
-  private static final String MAPS_URL = "https://www.google.com/maps/search";
 
   private static final int EXIT_CHOICE = 9;
   private static final int CLEAR_CHOICE = 7;
   private static final int USE_CURRENT_LOCATION = 6;
 
   private final String apiKey;
-  private final Map<String, String> locationInfo = new HashMap<>();
+  private final LocationInfo locationInfo;
   private final Scanner scanner;
-  private final CloseableHttpClient httpClient;
+  private final GoogleApiService googleApiService;
 
-  public LocationProgram() throws IOException {
+  /** Constructs a new LocationProgram instance. */
+  public LocationProgram() {
     this.apiKey = System.getenv("GOOGLE_API_KEY");
     if (this.apiKey == null || this.apiKey.isEmpty()) {
       throw new IllegalStateException("GOOGLE_API_KEY environment variable is not set");
     }
     this.scanner = new Scanner(System.in);
-    this.httpClient = HttpClients.createDefault();
+    this.googleApiService = new GoogleApiService(apiKey);
+    this.locationInfo = new LocationInfo();
   }
 
+  /** Starts the main loop of the application. */
   public void run() {
     try {
       while (true) {
         displayMenu();
-        int choice = getIntInput("Enter your choice");
+        int choice = getIntInput("Enter your choice: ");
         if (choice == EXIT_CHOICE) {
           logger.info("Exiting the program...");
           break;
@@ -66,11 +56,13 @@ public class LocationProgram implements AutoCloseable {
       }
     } catch (Exception e) {
       logger.error("An unexpected error occurred", e);
+      logger.info("An error occurred: {}", e.getMessage());
     }
   }
 
+  /** Displays the main menu to the user. */
   private void displayMenu() {
-    System.out.println("\nPlease enter the index of your choice:");
+    System.out.println("\nPlease enter the index of your choice: ");
     System.out.println("1. Country");
     System.out.println("2. State");
     System.out.println("3. City");
@@ -82,183 +74,97 @@ public class LocationProgram implements AutoCloseable {
     System.out.println("9. Exit");
   }
 
-  private void processChoice(int choice) throws IOException {
-    switch (choice) {
-      case 1 -> handleLocationInput("country", "country");
-      case 2 -> handleLocationInput("state", "administrative_area_level_1");
-      case 3 -> handleLocationInput("city", "locality");
-      case 4 -> handleLocationInput("address", "address");
-      case 5 -> handleLocationInput("pinCode", "postal_code");
-      case USE_CURRENT_LOCATION -> useCurrentLocation();
-      case CLEAR_CHOICE -> clearLocationInfo();
-      case 8 -> pinpointOnGoogleMaps(); // New case for Google Maps
-      case EXIT_CHOICE -> {
-        /* Do nothing, handled in run() */
-      }
-      default -> System.out.println("Invalid choice. Please try again.");
-    }
-  }
-
-  private void pinpointOnGoogleMaps() throws IOException {
-    String address = locationInfo.get("address");
-    if (address != null && !address.isEmpty()) {
-      String completeAddress = getCompleteAddress(address);
-      String googleMapsRedirectUrl = constructGoogleMapsURL(completeAddress);
-
-      // Open the default browser with the constructed URL
-      try {
-        if (Desktop.isDesktopSupported()) {
-          Desktop desktop = Desktop.getDesktop();
-          desktop.browse(new URI(googleMapsRedirectUrl));
-        } else {
-          System.out.println("Desktop API is not supported on this system.");
-        }
-      } catch (IOException | URISyntaxException e) {
-        e.printStackTrace();
-      }
-    } else {
-      System.out.println(
-          "Error: Address data is not available. Please provide an address before using this feature.");
-    }
-  }
-
-  public static String constructGoogleMapsURL(String address) {
-    if (address != null) {
-      String queryParam = address.replace(" ", "+");
-      return String.format("%s/?api=1&query=%s", MAPS_URL, queryParam);
-    } else {
-      return null;
-    }
-  }
-
-  public String getCompleteAddress(String partialAddress) throws IOException {
-    JSONArray predictions = searchAgain(partialAddress, "address");
-    return predictions.getJSONObject(0).getString("description");
-  }
-
-  private void useCurrentLocation() {
+  /**
+   * Processes the user's menu choice.
+   *
+   * @param choice The user's choice from the menu.
+   */
+  private void processChoice(int choice) {
     try {
-      System.out.println("Fetching your current location...");
-      JSONObject geoLocation = getGeolocation();
-      double latitude = geoLocation.getJSONObject("location").getDouble("lat");
-      double longitude = geoLocation.getJSONObject("location").getDouble("lng");
-
-      System.out.printf("Coordinates: %.6f, %.6f%n", latitude, longitude);
-
-      String geocodingData = getGeocodingData(latitude, longitude);
-      parseAndSetAddress(geocodingData);
-
-      System.out.println("Location information updated based on your current location.");
-    } catch (Exception e) {
-      logger.error("Error fetching current location", e);
-      System.out.println("Failed to fetch current location. Please try again or use manual input.");
-    }
-  }
-
-  private void parseAndSetAddress(String jsonResponse) {
-    JSONObject root = new JSONObject(jsonResponse);
-    JSONArray results = root.getJSONArray("results");
-
-    if (!results.isEmpty()) {
-      JSONArray addressComponents = results.getJSONObject(0).getJSONArray("address_components");
-
-      clearLocationInfo();
-
-      for (int i = 0; i < addressComponents.length(); i++) {
-        JSONObject component = addressComponents.getJSONObject(i);
-        JSONArray types = component.getJSONArray("types");
-        String longName = component.getString("long_name");
-
-        updateLocationInfo(types, longName);
+      switch (choice) {
+        case 1 -> handleLocationInput("country", "country");
+        case 2 -> handleLocationInput("state", "administrative_area_level_1");
+        case 3 -> handleLocationInput("city", "locality");
+        case 4 -> handleLocationInput("address", "address");
+        case 5 -> handleLocationInput("pinCode", "postal_code");
+        case USE_CURRENT_LOCATION -> useCurrentLocation();
+        case CLEAR_CHOICE -> clearLocationInfo();
+        case 8 -> pinpointOnGoogleMaps();
+        default -> System.out.println("Invalid choice. Please try again.");
       }
-
-      // Trim the address if it was set
-      locationInfo.computeIfPresent("address", (k, v) -> v.trim());
-    } else {
-      System.out.println("No results found for the current location");
+    } catch (Exception e) {
+      logger.error("Error processing choice", e);
+      logger.info("An error occurred while processing your choice: {}", e.getMessage());
     }
   }
 
-  private void updateLocationInfo(JSONArray types, String longName) {
-    List<Object> typesList = types.toList();
-    if (typesList.contains("country")) {
-      locationInfo.put("country", longName);
-    } else if (typesList.contains("administrative_area_level_1")) {
-      locationInfo.put("state", longName);
-    } else if (typesList.contains("locality")) {
-      locationInfo.put("city", longName);
-    } else if (typesList.contains("postal_code")) {
-      locationInfo.put("pinCode", longName);
-    } else if ((typesList.contains("street_address")
-        || typesList.contains("route")
-        || typesList.contains("neighborhood"))
-        || typesList.contains("sublocality")) {
-      locationInfo.merge("address", longName, (old, newVal) -> old + ", " + newVal);
-    }
-  }
-
-  private JSONObject getGeolocation() throws IOException, ParseException {
-    HttpPost httpPost = new HttpPost(GEOLOCATION_URL + "?key=" + apiKey);
-    httpPost.setHeader("Content-Type", "application/json");
-    httpPost.setEntity(new StringEntity("{}"));
-
-    try (CloseableHttpResponse response = httpClient.execute(httpPost)) {
-      String responseBody = EntityUtils.toString(response.getEntity());
-      return new JSONObject(responseBody);
-    }
-  }
-
-  private String getGeocodingData(double latitude, double longitude) throws IOException {
-    String url =
-        String.format("%s?latlng=%s,%s&key=%s", GEOCODING_URL, latitude, longitude, apiKey);
-    return makeApiCall(url);
-  }
-
-  private void handleLocationInput(String key, String type) throws IOException {
-    String input = getStringInput("Please enter the " + key);
-    logger.info("Received {} {} from user", key, input);
+  /**
+   * Handles location input from the user.
+   *
+   * @param key The key representing the location type (e.g., "country").
+   * @param type The type parameter for the API call.
+   * @throws IOException If an I/O error occurs.
+   */
+  private void handleLocationInput(String key, String type) throws IOException, GoogleApiException {
+    String input = getStringInput("Please enter the " + key + ": ");
+    logger.info("Received {} '{}' from user", key, input);
     processApiRequest(input, type, key);
   }
 
-  private void processApiRequest(String input, String type, String key) throws IOException {
-    String url = buildApiUrl(input, type);
-    String jsonResponse = makeApiCall(url);
-    JSONObject response = new JSONObject(jsonResponse);
+  /**
+   * Processes the API request based on user input.
+   *
+   * @param input The user's input.
+   * @param type The type parameter for the API call.
+   * @param key The key representing the location type.
+   * @throws IOException If an I/O error occurs.
+   */
+  private void processApiRequest(String input, String type, String key)
+      throws IOException, GoogleApiException {
+    JSONArray predictions = googleApiService.getPredictions(input, type);
 
-    if ("ZERO_RESULTS".equals(response.getString("status"))) {
-      logger.info(
-          "Received empty result from API response for input '{}' and type '{}'", input, type);
-      locationInfo.put(key, input);
+    if (predictions.isEmpty()) {
+      logger.info("No results found for input '{}' and type '{}'", input, type);
+      locationInfo.setValueByKey(key, input);
       return;
     }
 
-    JSONArray predictions = response.getJSONArray("predictions");
     displayOptions(predictions);
-
     handleUserSelection(predictions, type, key);
   }
 
+  /**
+   * Handles the user's selection from the list of predictions.
+   *
+   * @param predictions The array of predictions from the API.
+   * @param type The type parameter for the API call.
+   * @param key The key representing the location type.
+   * @throws IOException If an I/O error occurs.
+   */
   private void handleUserSelection(JSONArray predictions, String type, String key)
-      throws IOException {
+      throws IOException, GoogleApiException {
     while (true) {
-      String userInput = getStringInput("Enter index or continue searching");
+      String userInput = getStringInput("Enter index or continue searching: ");
 
-      if (userInput.matches("\\d+")) {
+      if (InputValidator.isInteger(userInput)) {
         int index = Integer.parseInt(userInput);
         if (handleIndexInput(predictions, index, type, key)) {
           break;
         } else if (type.equalsIgnoreCase("postal_code")) {
-          predictions = searchAgain(userInput, type);
+          // Re-query with the user input
+          predictions = googleApiService.getPredictions(userInput, type);
           if (predictions.isEmpty()) {
-            locationInfo.put(key, userInput);
+            locationInfo.setValueByKey(key, userInput);
             break;
           }
           displayOptions(predictions);
+        } else {
+          logger.info("Invalid index. Please try again.");
         }
       } else {
-        predictions = searchAgain(userInput, type);
+        predictions = googleApiService.getPredictions(userInput, type);
         if (predictions.isEmpty()) {
-          locationInfo.put(key, userInput);
+          locationInfo.setValueByKey(key, userInput);
           break;
         }
         displayOptions(predictions);
@@ -266,61 +172,59 @@ public class LocationProgram implements AutoCloseable {
     }
   }
 
+  /**
+   * Handles the index input from the user and selects the prediction if valid.
+   *
+   * @param predictions The array of predictions from the API.
+   * @param index The index entered by the user.
+   * @param type The type parameter for the API call.
+   * @param key The key representing the location type.
+   * @return True if the prediction was successfully selected, false otherwise.
+   * @throws IOException If an I/O error occurs.
+   */
   private boolean handleIndexInput(JSONArray predictions, int index, String type, String key)
-      throws IOException {
+      throws IOException, GoogleApiException {
     if (type.equalsIgnoreCase("postal_code")) {
       if (index <= 5) {
         String confirmation = getStringInput("Is this an index value? (y/n)");
         if (confirmation.equalsIgnoreCase("y")) {
-          return selectPrediction(predictions, index - 1, key);
+          selectPrediction(predictions, index - 1, key);
+          return true;
         }
       }
       return false;
     } else if (index > 0 && index <= predictions.length()) {
-      return selectPrediction(predictions, index - 1, key);
+      selectPrediction(predictions, index - 1, key);
+      return true;
     }
     return false;
   }
 
-  private boolean selectPrediction(JSONArray predictions, int index, String key)
-      throws IOException {
+  /**
+   * Selects a prediction based on the user's choice and updates location information.
+   *
+   * @param predictions The array of predictions from the API.
+   * @param index The index of the selected prediction.
+   * @param key The key representing the location type.
+   * @throws IOException If an I/O error occurs.
+   */
+  private void selectPrediction(JSONArray predictions, int index, String key)
+      throws IOException, GoogleApiException {
     JSONObject prediction = predictions.getJSONObject(index);
     String mainText = prediction.getJSONObject("structured_formatting").getString("main_text");
-    locationInfo.put(key, mainText);
+    locationInfo.setValueByKey(key, mainText);
     updateRelatedFields(prediction, key);
-    return true;
   }
 
-  private JSONArray searchAgain(String input, String type) throws IOException {
-    String url = buildApiUrl(input, type);
-    String jsonResponse = makeApiCall(url);
-    JSONObject response = new JSONObject(jsonResponse);
-    return response.getJSONArray("predictions");
-  }
-
-  private String buildApiUrl(String input, String type) {
-    String encodedInput = URLEncoder.encode(input, StandardCharsets.UTF_8);
-    return AUTOCOMPLETE_URL + "?input=" + encodedInput + "&key=" + apiKey + "&type=" + type;
-  }
-
-  private String makeApiCall(String url) throws IOException {
-    HttpGet request = new HttpGet(URI.create(url));
-    try (CloseableHttpResponse response = httpClient.execute(request)) {
-      return EntityUtils.toString(response.getEntity());
-    } catch (ParseException e) {
-      throw new IOException("Error parsing API response", e);
-    }
-  }
-
-  private void displayOptions(JSONArray predictions) {
-    for (int i = 0; i < predictions.length(); i++) {
-      JSONObject prediction = predictions.getJSONObject(i);
-      String mainText = prediction.getString("description");
-      System.out.println((i + 1) + ". " + mainText);
-    }
-  }
-
-  private void updateRelatedFields(JSONObject prediction, String key) throws IOException {
+  /**
+   * Updates related fields in the location information based on the selected prediction.
+   *
+   * @param prediction The selected prediction.
+   * @param key The key representing the location type.
+   * @throws IOException If an I/O error occurs.
+   */
+  private void updateRelatedFields(JSONObject prediction, String key)
+      throws IOException, GoogleApiException {
     JSONArray terms = prediction.getJSONArray("terms");
 
     switch (key) {
@@ -334,40 +238,61 @@ public class LocationProgram implements AutoCloseable {
         validateAndUpdateLocation(terms, "administrative_area_level_1");
         validateAndUpdateLocation(terms, "locality");
       }
+      default -> logger.debug("No additional fields to update for key: {}", key);
     }
   }
 
-  private void validateAndUpdateLocation(JSONArray terms, String type) throws IOException {
+  /**
+   * Validates and updates the location information based on the terms and type.
+   *
+   * @param terms The array of terms from the prediction.
+   * @param type The type parameter for the API call.
+   * @throws IOException If an I/O error occurs.
+   */
+  private void validateAndUpdateLocation(JSONArray terms, String type)
+      throws IOException, GoogleApiException {
     for (int i = terms.length() - 1; i >= 0; i--) {
       String termValue = terms.getJSONObject(i).getString("value");
       if (isValidLocation(termValue, type)) {
         String locationKey = getLocationKey(type);
-        locationInfo.put(locationKey, termValue);
-        terms.remove(i);
-        break;
+        if (locationKey != null) {
+          locationInfo.setValueByKey(locationKey, termValue);
+          locationInfo.setValueByKey(locationKey, termValue);
+          terms.remove(i);
+          break;
+        }
       }
     }
   }
 
-  private boolean isValidLocation(String input, String type) throws IOException {
-    String url = buildApiUrl(input, type);
-    String jsonResponse = makeApiCall(url);
-    JSONObject response = new JSONObject(jsonResponse);
-
-    if ("OK".equals(response.getString("status"))) {
-      JSONArray predictions = response.getJSONArray("predictions");
-      if (!predictions.isEmpty()) {
-        String mainText =
-            predictions
-                .getJSONObject(0)
-                .getJSONObject("structured_formatting")
-                .getString("main_text");
-        return mainText.toLowerCase().contains(input.toLowerCase());
-      }
+  /**
+   * Checks if the input is a valid location of the specified type.
+   *
+   * @param input The input string to validate.
+   * @param type The type parameter for the API call.
+   * @return True if valid, false otherwise.
+   * @throws IOException If an I/O error occurs.
+   */
+  private boolean isValidLocation(String input, String type)
+      throws IOException, GoogleApiException {
+    JSONArray predictions = googleApiService.getPredictions(input, type);
+    if (!predictions.isEmpty()) {
+      String mainText =
+          predictions
+              .getJSONObject(0)
+              .getJSONObject("structured_formatting")
+              .getString("main_text");
+      return mainText.equalsIgnoreCase(input);
     }
     return false;
   }
 
+  /**
+   * Maps the Google API location type to the LocationInfo key.
+   *
+   * @param type The Google API location type.
+   * @return The corresponding key in LocationInfo, or null if not applicable.
+   */
   private String getLocationKey(String type) {
     return switch (type) {
       case "country" -> "country";
@@ -377,52 +302,163 @@ public class LocationProgram implements AutoCloseable {
     };
   }
 
-  private void clearLocationInfo() {
-    locationInfo.clear();
-    logger.info("Cleared all location information");
-    System.out.println("All location information has been cleared.");
+  /**
+   * Displays the list of prediction options to the user.
+   *
+   * @param predictions The array of predictions from the API.
+   */
+  private void displayOptions(JSONArray predictions) {
+    for (int i = 0; i < predictions.length(); i++) {
+      JSONObject prediction = predictions.getJSONObject(i);
+      String description = prediction.getString("description");
+      System.out.println((i + 1) + ". " + description);
+    }
   }
 
-  private void displayLocationInfo() {
-    System.out.println("\nCurrent Location Information:");
-    System.out.println("Country: " + locationInfo.getOrDefault("country", "Not set"));
-    System.out.println("State: " + locationInfo.getOrDefault("state", "Not set"));
-    System.out.println("City: " + locationInfo.getOrDefault("city", "Not set"));
-    System.out.println("Address: " + locationInfo.getOrDefault("address", "Not set"));
-    System.out.println("PinCode: " + locationInfo.getOrDefault("pinCode", "Not set"));
+  /** Uses the current location to update location information. */
+  private void useCurrentLocation() {
+    try {
+      logger.info("Fetching your current location...");
+      JSONObject geoLocation = googleApiService.getGeolocation();
+      double latitude = geoLocation.getJSONObject("location").getDouble("lat");
+      double longitude = geoLocation.getJSONObject("location").getDouble("lng");
+
+      logger.info("Coordinates: {}, {}", latitude, longitude);
+
+      JSONObject geocodingData = googleApiService.getGeocodingData(latitude, longitude);
+      parseAndSetAddress(geocodingData);
+
+      logger.info("Location information updated based on your current location.");
+    } catch (GoogleApiException e) {
+      logger.error("Google API error: {}", e.getMessage());
+      logger.info("An error occurred with the Google API: {}", e.getMessage());
+    } catch (IOException e) {
+      logger.error("Error fetching current location", e);
+      logger.info("Failed to fetch current location. Please try again or use manual input.");
+    }
   }
 
-  private String getStringInput(String prompt) {
-    System.out.print(prompt + ": ");
-    return scanner.nextLine().trim();
+  /**
+   * Parses the geocoding data and updates location information.
+   *
+   * @param geocodingData The JSONObject response from the geocoding API.
+   */
+  private void parseAndSetAddress(JSONObject geocodingData) {
+    JSONArray results = geocodingData.getJSONArray("results");
+
+    if (!results.isEmpty()) {
+      JSONArray addressComponents = results.getJSONObject(0).getJSONArray("address_components");
+
+      locationInfo.clear();
+
+      for (int i = 0; i < addressComponents.length(); i++) {
+        JSONObject component = addressComponents.getJSONObject(i);
+        JSONArray types = component.getJSONArray("types");
+        String longName = component.getString("long_name");
+
+        updateLocationInfo(types, longName);
+      }
+    } else {
+      logger.info("No results found for the current location.");
+    }
   }
 
-  private int getIntInput(String prompt) {
-    while (true) {
-      try {
-        System.out.print(prompt + ": ");
-        return Integer.parseInt(scanner.nextLine().trim());
-      } catch (NumberFormatException e) {
-        System.out.println("Invalid input. Please enter a number.");
+  /**
+   * Updates the location information based on the types of address components.
+   *
+   * @param types The types of the address component.
+   * @param longName The long name of the address component.
+   */
+  private void updateLocationInfo(JSONArray types, String longName) {
+    for (Object typeObj : types) {
+      String type = typeObj.toString();
+      switch (type) {
+        case "country" -> locationInfo.setCountry(longName);
+        case "administrative_area_level_1" -> locationInfo.setState(longName);
+        case "locality" -> locationInfo.setCity(longName);
+        case "postal_code" -> locationInfo.setPinCode(longName);
+        case "street_address", "route", "neighborhood", "sublocality", "street_number" ->
+            locationInfo.appendAddress(longName);
+        default -> {}
       }
     }
   }
 
-  @Override
-  public void close() {
+  /** Opens the location in Google Maps. */
+  private void pinpointOnGoogleMaps() {
     try {
-      scanner.close();
-      httpClient.close();
-    } catch (IOException e) {
-      logger.error("Error closing resources", e);
+      String address = locationInfo.getAddress().orElse(null);
+      if (address != null && !address.isEmpty()) {
+        String completeAddress = googleApiService.getCompleteAddress(address);
+        if (completeAddress != null) {
+          String googleMapsUrl = googleApiService.constructGoogleMapsURL(completeAddress);
+          GoogleMapsUtil.openInBrowser(googleMapsUrl);
+        } else {
+          logger.info("Error: Address data is not available. Please try again.");
+        }
+      } else {
+        logger.info(
+            "Error: Address data is not available. Please provide an address before using this feature.");
+      }
+    } catch (Exception e) {
+      logger.error("Error pinning on Google Maps", e);
+      logger.info("An error occurred while trying to open Google Maps: {}", e.getMessage());
     }
   }
 
-  public static void main(String[] args) {
-    try (LocationProgram program = new LocationProgram()) {
-      program.run();
-    } catch (IOException e) {
-      logger.error("Failed to initialize LocationProgramReloaded", e);
+  /** Clears all location information. */
+  private void clearLocationInfo() {
+    locationInfo.clear();
+    logger.info("All location information has been cleared.");
+  }
+
+  /** Displays the current location information. */
+  private void displayLocationInfo() {
+    System.out.println("\nCurrent Location Information:");
+    System.out.println("Country: " + locationInfo.getCountry().orElse("Not set"));
+    System.out.println("State: " + locationInfo.getState().orElse("Not set"));
+    System.out.println("City: " + locationInfo.getCity().orElse("Not set"));
+    System.out.println("Address: " + locationInfo.getAddress().orElse("Not set"));
+    System.out.println("PinCode: " + locationInfo.getPinCode().orElse("Not set"));
+  }
+
+  /**
+   * Gets a string input from the user.
+   *
+   * @param prompt The prompt to display.
+   * @return The user's input.
+   */
+  private String getStringInput(String prompt) {
+    System.out.println(prompt);
+    return scanner.nextLine().trim();
+  }
+
+  /**
+   * Gets an integer input from the user.
+   *
+   * @param prompt The prompt to display.
+   * @return The user's input as an integer.
+   */
+  private int getIntInput(String prompt) {
+    while (true) {
+      try {
+        System.out.println(prompt);
+        return Integer.parseInt(scanner.nextLine().trim());
+      } catch (NumberFormatException e) {
+        logger.warn("Invalid input for integer. Prompt: {}", prompt);
+        logger.info("Invalid input. Please enter a number.");
+      }
     }
+  }
+
+  /**
+   * Closes resources used by the LocationProgram.
+   *
+   * @throws IOException If an I/O error occurs.
+   */
+  @Override
+  public void close() throws IOException {
+    scanner.close();
+    googleApiService.close();
   }
 }
