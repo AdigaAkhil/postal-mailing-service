@@ -282,7 +282,8 @@ public class LocationProgram implements Closeable {
               .getJSONObject(0)
               .getJSONObject("structured_formatting")
               .getString("main_text");
-      return mainText.equalsIgnoreCase(input);
+
+      return mainText.toLowerCase().contains(input.toLowerCase());
     }
     return false;
   }
