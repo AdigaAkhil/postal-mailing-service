@@ -27,7 +27,7 @@ Before running the application, ensure you have the following:
 1. Clone the repository:
 
     ```bash
-    git clone https://github.com/yourusername/postal-mailing-service.git
+    git clone https://github.com/AdigaAkhil/postal-mailing-service.git
     cd postal-mailing-service
     ```
 
@@ -64,10 +64,10 @@ For enhanced security, it's recommended to set up API restrictions on your API k
 Set the environment variable and run the JAR file using the following command:
 
 ```bash
-GOOGLE_API_KEY=your_actual_api_key java -jar target/postal-mailing-service.jar
+GOOGLE_API_KEY=<key> java -jar target/postal-mailing-service.jar
 ```
 
-- Replace `your_actual_api_key` with your actual Google API key.
+- Replace `<key>` with your actual Google API key.
 - Adjust the JAR file name if necessary.
 
 ### Using an IDE
@@ -75,7 +75,7 @@ GOOGLE_API_KEY=your_actual_api_key java -jar target/postal-mailing-service.jar
 2. Select your run configuration or create a new one.
 3. In the **Environment Variables** section, add a new variable:
    - **Name**: `GOOGLE_API_KEY`
-   - **Value**: Your actual Google API key
+   - **Value**: Google API key
 4. Save the configuration and run the application.
 
 ## Usage
