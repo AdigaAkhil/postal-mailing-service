@@ -104,6 +104,7 @@ public class LocationProgram implements Closeable {
    * @param key The key representing the location type (e.g., "country").
    * @param type The type parameter for the API call.
    * @throws IOException If an I/O error occurs.
+   * @throws GoogleApiException If an error occurs related to the Google API.
    */
   private void handleLocationInput(String key, String type) throws IOException, GoogleApiException {
     String input = getStringInput("Please enter the " + key + ": ");
@@ -118,6 +119,7 @@ public class LocationProgram implements Closeable {
    * @param type The type parameter for the API call.
    * @param key The key representing the location type.
    * @throws IOException If an I/O error occurs.
+   * @throws GoogleApiException If an error occurs related to the Google API.
    */
   private void processApiRequest(String input, String type, String key)
       throws IOException, GoogleApiException {
@@ -140,6 +142,7 @@ public class LocationProgram implements Closeable {
    * @param type The type parameter for the API call.
    * @param key The key representing the location type.
    * @throws IOException If an I/O error occurs.
+   * @throws GoogleApiException If an error occurs related to the Google API.
    */
   private void handleUserSelection(JSONArray predictions, String type, String key)
       throws IOException, GoogleApiException {
@@ -181,6 +184,7 @@ public class LocationProgram implements Closeable {
    * @param key The key representing the location type.
    * @return True if the prediction was successfully selected, false otherwise.
    * @throws IOException If an I/O error occurs.
+   * @throws GoogleApiException If an error occurs related to the Google API.
    */
   private boolean handleIndexInput(JSONArray predictions, int index, String type, String key)
       throws IOException, GoogleApiException {
@@ -207,6 +211,7 @@ public class LocationProgram implements Closeable {
    * @param index The index of the selected prediction.
    * @param key The key representing the location type.
    * @throws IOException If an I/O error occurs.
+   * @throws GoogleApiException If an error occurs related to the Google API.
    */
   private void selectPrediction(JSONArray predictions, int index, String key)
       throws IOException, GoogleApiException {
@@ -222,6 +227,7 @@ public class LocationProgram implements Closeable {
    * @param prediction The selected prediction.
    * @param key The key representing the location type.
    * @throws IOException If an I/O error occurs.
+   * @throws GoogleApiException If an error occurs related to the Google API.
    */
   private void updateRelatedFields(JSONObject prediction, String key)
       throws IOException, GoogleApiException {
@@ -248,6 +254,7 @@ public class LocationProgram implements Closeable {
    * @param terms The array of terms from the prediction.
    * @param type The type parameter for the API call.
    * @throws IOException If an I/O error occurs.
+   * @throws GoogleApiException If an error occurs related to the Google API.
    */
   private void validateAndUpdateLocation(JSONArray terms, String type)
       throws IOException, GoogleApiException {
@@ -256,7 +263,6 @@ public class LocationProgram implements Closeable {
       if (isValidLocation(termValue, type)) {
         String locationKey = getLocationKey(type);
         if (locationKey != null) {
-          locationInfo.setValueByKey(locationKey, termValue);
           locationInfo.setValueByKey(locationKey, termValue);
           terms.remove(i);
           break;
@@ -272,6 +278,7 @@ public class LocationProgram implements Closeable {
    * @param type The type parameter for the API call.
    * @return True if valid, false otherwise.
    * @throws IOException If an I/O error occurs.
+   * @throws GoogleApiException If an error occurs related to the Google API.
    */
   private boolean isValidLocation(String input, String type)
       throws IOException, GoogleApiException {
